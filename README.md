@@ -1,32 +1,30 @@
 
 # Client-Side Path Traversal (_CSPT_) Mitigation / CSP Extension
 
+Note: the format of this proposal was highly inspired by ["_TC39 proposal for mitigating prototype pollution_"](https://github.com/tc39/proposal-symbol-proto). This proposal does not consider the issue of CSPT in non-browser contexts, however the problem space does include that and other contexts. 
 
 # TOC
-
+* [tl;dr](#tldr)
 * [Problem Description](#problem-description)
   * [Double-Dot URL Path Shortening](#double-dot-url-path-shortening)
   * [Non-File Reverse Solidus Path URL Strings](#non-file-reverse-solidus-path-url-strings)
-* [Current Issues in Defense](#current-issues-in-defense)
-  * [Issues With Current Defenses](#issues-with-current-defenses)
-  * [Issues With Common Languages](#issues-with-common-languages)
-  * [Issues With `encodeURIComponent`](#issues-with-encodeuricomponent)
 * [Proposed Solutions](#proposed-solutions)
-  * [New CSP Directives](#new-csp-directives)
-    * [`no-shortening` CSP Directive](#no-shortening-csp-directive)
-    * [`no-reverse-solidus` CSP Directive](#no-reverse-solidus-csp-directive)
-  * [Opt-In For Mitigation](#opt-in-for-mitigation)
+  * [New CSP Expressions](#new-csp-expressions)
+    * [`no-shortening` CSP Expression](#no-shortening-csp-expression)
+    * [`no-reverse-solidus` CSP Expression](#no-reverse-solidus-csp-expression)
   * [Limitations](#limitations)
     * [Server-Side Path Decoding](#server-side-path-decoding)
 * [What Will This Break?](#what-will-this-break)
   * [Languages Without Canonicalization](#languages-without-canonicalization)
-  * [Windows](#windows)
 * [Appendix](#appendix)
-  * [Example Vulnerabilities](#example-vulnerabilities)
+  * [Double Dot Following URLs](#double-dot-following-urls)
+  * [Double Dot Encoded Following URLs](#double-dot-encoded-following-urls)
+  * [`invalid-reverse-solidus` Following URLs](#invalid-reverse-solidus-following-urls)
+  * [`invalid-reverse-solidus` Encoded Following URLs](#invalid-reverse-solidus-encoded-following-urls)
 
 # tl;dr
 
-This proposal seeks to mitigate common security issues that arise from the default-shortening of URL paths by treating [_double-dot URL path segments_](https://url.spec.whatwg.org/#double-dot-path-segment) as navigation to parent paths, as well as treating [_invalid reverse solidus_](https://url.spec.whatwg.org/#invalid-reverse-solidus) (`\`) as valid forward solidus markets (`/`), by extending the Content-Security-Policy (CSP) feature to include new expressions that allow or disallow certain canonicalization techniques: `allow-shortening`, `no-shortening`, `allow-reverse-solidus`, `no-reverse-solidus`. For example, it would be possible to communicate the browser whether `https://example.com/dir1/../dir3/` and `https://example.com\dir1\..\dir3\` should be considered valid URLs, resulting in a final URL of `https://example.com/dir3/`. By providing an opt-in feature, webmasters may explicitly state whether they intend to support these canonicalization methods, and protect their users against Client-Side Path Traversal (CSPT) vulnerabilities.
+This proposal seeks to mitigate common security issues that arise from the default-shortening of URL paths by treating [_double-dot URL path segments_](https://url.spec.whatwg.org/#double-dot-path-segment) (`/..`) as navigation to parent paths, as well as treating [_invalid reverse solidus_](https://url.spec.whatwg.org/#invalid-reverse-solidus) (`\`) as valid forward solidus markers (`/`), by extending the Content-Security-Policy (CSP) feature to include new expressions that allow or disallow certain canonicalization techniques: `allow-shortening`, `no-shortening`, `allow-reverse-solidus`, `no-reverse-solidus`. For example, it would be possible to communicate the browser whether `https://example.com/dir1/../dir3/` and `https://example.com\dir1\..\dir3\` should be considered valid URLs, and terminate parsing of such URLs in different contexts. By providing an opt-in feature, webmasters may explicitly state whether they intend to support these canonicalization methods, and protect their users against Client-Side Path Traversal (CSPT) vulnerabilities.
 
 
 # Problem Description
@@ -83,7 +81,7 @@ new URLSearchParams("?articleName=../../").get("articleName") === new URLSearchP
   true
 ```
 
-The secure way of handling the above operation is to encode the path before appending it to the URL. For example:
+A method, typically considered secure, of handling the above operation is to encode the path before appending it to the URL. For example:
 
 ```js
 const articleUrl = `https://example.com/static/article/${encodeURIComponent(articleName)}`;
@@ -96,6 +94,8 @@ All three of the above cases indicate that remarkable care must be taken when co
 This issue is so common that the term "client-side path traversal" (CSPT) has been coined to refer to this class of vulnerability. CSPT has been seeing more and more research as of late. These types of vulnerabilities have been identified in a wide range of websites, with its application being similar to cross-request site forgery (CSRF). These vulnerabilities have been found in web applications which [do not use query parameters](https://netragard.com/saving-csrf-client-side-path-traversal-to-the-rescue/), have been abused to [perform CSS injection](https://hackerone.com/reports/1245165) leading to full-account-takeover, and have been abused to interact with [privileged browser extensions](https://medium.com/@renwa/client-side-path-traversal-cspt-bug-bounty-reports-and-techniques-8ee6cd2e7ca1). Vulnerabilities may arise from stored values instead of queryable parameters on the visited webpage, such as [this 1-client Gitlab takeover](https://gitlab.com/gitlab-org/gitlab/-/issues/365427) vulnerability in 2022. Two different public tools already exist for automatically identifying websites vulnerable to CSPT: [CSPTBurpExtension](https://github.com/doyensec/CSPTBurpExtension) by DoyenSec for Burp Suite, and [Gecko](https://github.com/vitorfhc/gecko), by  Vitor Falcao.
 
 Given that attention to this class of vulnerability has been rising, it now raises the question as to whether browsers should, on standard webpages, be shortening URL paths unless explicitly necessary. The vast majority of websites do not rely on this functionality, and it has proven to be an edgecase that is unsafely handled by developers.
+
+It is expected that the number of vulnerable applications will continue to grow, as well as the detection and exploitation of these types of vulnerabilities, as the issue becomes more well-known in the hacking world. As exploitation relies heavily on highly esoteric URL parsing techniques, a high-level mitigation may be appropriate to implement.
 
 ## Non-File Reverse Solidus Path URL Strings
 
@@ -145,17 +145,26 @@ would be terminated during the URL parsing stage, instead of the current functio
 
 A complementary `allow-reverse-solidus` expression would leave current path parsing as-is.
 
-## Limitation
+## Limitations
 
 There are various limitations and pitfalls arising from this proposal.
 
 ### Server-Side Path Decoding
 
-A serious limitation to this proposal is that some webservers perform decoding of URL-encoded paths. This means that a URL of `https://example.com/%2Fdir1%2F..%2Fdir2%2Ffoo.jpg` will be sent to the `example.com` server with the path `/%2Fdir1%2F..%2Fdir2%2Ffoo.jpg`, resulting in either a server-side redirect to `/dir2/foo.jpg`, or simply the file itself. 
+A serious limitation to this proposal is that some webservers perform decoding of URL-encoded paths, either deliberately or erroneously. This means that a URL of `https://example.com/%2Fdir1%2F..%2Fdir2%2Ffoo.jpg` will be sent to the `example.com` server with the path `/%2Fdir1%2F..%2Fdir2%2Ffoo.jpg`, resulting in either a server-side redirect to `/dir2/foo.jpg`, or simply the file itself. Whether this is intended by webmasters or not is questionable, as it consequentially denies the ability for files to be retrieved from the affected websites if they include `/..` in their name (as the server will treat decoded or encoded versions of the filename as a shortening).
 
-From a list of "the safe-for-work top-100 most visited websites in November 2024" (whether it's correct or not), a total of 51 websites automatically either redirected or served `robots.txt` when requesting the path `/dir1/../robots.txt` (see [Appendix](double-dot-following-urls)), while a total of 27 websites automatically either redirected or served `robots.txt` when requesting for the path `/dir1%2F..%2Frobots.txt` (see [Appendix](double-dot-encoded-following-urls)).
+From a list of "the safe-for-work top-100 most visited websites in November 2024" (whether it's correct or not), a total of 51 websites automatically either redirected or served `robots.txt` when requesting the path `/dir1/../robots.txt` (see [Appendix](#double-dot-following-urls)), while a total of 27 websites automatically either redirected or served `robots.txt` when requesting for the path `/dir1%2F..%2Frobots.txt` (see [Appendix](#double-dot-encoded-following-urls)).
 
-When requesting `/dir1\\..\\robots.txt`, 20 websites served `robots.txt` (see [Appendix](invalid-reverse-soliud-following-urls)), but by requesting `/dir1%5C..%5Crobots.txt`, just 42 websites served `robots.txt` (see [Appendix](invalid-reverse-solidus-encoded-following-urls)).
+From the top-100 visited websites, `shopify.com` was the only website which exhibited "infinite decoding". For example:
+
+```shell
+$ echo https://www.shopify.com/dir1$(urlencode $(urlencode $(urlencode $(urlencode '/'))))..$(urlencode $(urlencode $(urlencode $(urlencode '/'))))robots.txt
+https://www.shopify.com/dir1%2525252F..%2525252Frobots.txt
+$ curl -L https://www.shopify.com/dir1$(urlencode $(urlencode $(urlencode $(urlencode '/'))))..$(urlencode $(urlencode $(urlencode $(urlencode '/'))))robots.txt
+[robots.txt]
+```
+
+When requesting `/dir1\\..\\robots.txt`, 20 websites served `robots.txt` (see [Appendix](#invalid-reverse-soliud-following-urls)), but by requesting `/dir1%5C..%5Crobots.txt`, just 4 websites served `robots.txt` (see [Appendix](#invalid-reverse-solidus-encoded-following-urls)). Again, this means that on these websites, it is likely impossible to retrieve files which contain `\..` in their filename.
 
 This limitation is not a limitation directly of the CSP expressions outlined in this document. If we go back to the previous example of vulnerable code and sanitize the `articleName` using `URLSearchParams()` as so:
 
@@ -183,6 +192,7 @@ Some websites rely on relative paths (beginning or not) with `../` to import res
 
 ## Double Dot Following URLs
 
+`curl --path-as-is -L "https://www.${URL}/dir1/../robots.txt"`
 ```
 msn.com
 youtube.com
@@ -238,6 +248,8 @@ yelp.com
 ```
 ## Double Dot Encoded Following URLs
 
+`curl --path-as-is -L "https://www.${URL}/dir1%2F..%2Frobots.txt"`
+
 ```
 wikipedia.org
 taboola.com
@@ -270,6 +282,8 @@ okta.com
 
 ## `invalid-reverse-solidus` Following URLs
 
+`curl --path-as-is -L "https://www.${URL}/dir1\..\robots.txt"`
+
 ```
 google.com
 youtube.com
@@ -294,6 +308,8 @@ figma.com
 ```
 
 ## `invalid-reverse-solidus` Encoded Following URLs
+
+`curl --path-as-is -L "https://www.${URL}/dir1%5C..%5Crobots.txt"`
 
 ```
 bing.com
