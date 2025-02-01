@@ -16,6 +16,8 @@ Note: the format of this proposal was highly inspired by ["_TC39 proposal for mi
     * [Server-Side Path Decoding](#server-side-path-decoding)
 * [What Will This Break?](#what-will-this-break)
   * [Languages Without Canonicalization](#languages-without-canonicalization)
+* [Further Thoughts](#further-thoughts)
+  * [`allow-relative-shortening` CSP expression](#allow-relative-shortening-csp-expression)
 * [Appendix](#appendix)
   * [Double Dot Following URLs](#double-dot-following-urls)
   * [Double Dot Encoded Following URLs](#double-dot-encoded-following-urls)
@@ -24,7 +26,7 @@ Note: the format of this proposal was highly inspired by ["_TC39 proposal for mi
 
 # tl;dr
 
-This proposal seeks to mitigate common security issues that arise from the default-shortening of URL paths by treating [_double-dot URL path segments_](https://url.spec.whatwg.org/#double-dot-path-segment) (`/..`) as navigation to parent paths, as well as treating [_invalid reverse solidus_](https://url.spec.whatwg.org/#invalid-reverse-solidus) (`\`) as valid forward solidus markers (`/`), by extending the Content-Security-Policy (CSP) feature to include new expressions that allow or disallow certain canonicalization techniques: `allow-shortening`, `no-shortening`, `allow-reverse-solidus`, `no-reverse-solidus`. For example, it would be possible to communicate the browser whether `https://example.com/dir1/../dir3/` and `https://example.com\dir1\..\dir3\` should be considered valid URLs, and terminate parsing of such URLs in different contexts. By providing an opt-in feature, webmasters may explicitly state whether they intend to support these canonicalization methods, and protect their users against Client-Side Path Traversal (CSPT) vulnerabilities.
+This proposal seeks to mitigate common security issues that arise from the default-shortening of URL paths by treating [_double-dot URL path segments_](https://url.spec.whatwg.org/#double-dot-path-segment) (`/..`) as navigation to parent paths, as well as treating [_invalid reverse solidus_](https://url.spec.whatwg.org/#invalid-reverse-solidus) (`\`) as valid forward solidus markers (`/`), by extending the Content-Security-Policy (CSP) feature to include new expressions that allow or disallow certain canonicalization techniques: `allow-shortening`, `no-shortening`, `allow-reverse-solidus`, `no-reverse-solidus`, and possible `allow-relative-shortening`. For example, it would be possible to communicate the browser whether `https://example.com/dir1/../dir3/` and `https://example.com\dir1\..\dir3\` should be considered valid URLs, and terminate parsing of such URLs in different contexts. By providing an opt-in feature, webmasters may explicitly state whether they intend to support these canonicalization methods, and protect their users against Client-Side Path Traversal (CSPT) vulnerabilities.
 
 
 # Problem Description
@@ -72,9 +74,9 @@ Due to the lack of sanitization in the script and due to the browser's canonical
 
 Note: `png` files have been chosen in the above example to exemplify a website which may allow uploading of users' images. Since the Javascript code sets the response to an `innerHTML`, any textual comments stored in the PNG's EXIF data will be attached to the page (including HTML or Javascript).
 
-In example 1, the `articleName` is simply appended to the URL, resulting in `fetch()` navigating to the canonicalized URL. 
+In Example 1, the `articleName` is simply appended to the URL, resulting in `fetch()` navigating to the canonicalized URL. 
 
-For the above code, a common (albeit incorrect) coding pattern that has been observed is to check whether `window.location.search` contains the `/` character. However, as can be seen in example 2, `URLSearchParams()` parses and decodes parameters, leading to `$articleName` being the same as in example 2:
+For the above code, a common (albeit incorrect) coding pattern that has been observed is to check whether `window.location.search` contains the `/` character. However, as can be seen in Example 2, `URLSearchParams()` parses and decodes parameters, leading to `$articleName` being the same as in Example 1:
 
 ```js
 new URLSearchParams("?articleName=../../").get("articleName") === new URLSearchParams("?articleName=..%2F..%2F").get("articleName")  
@@ -87,11 +89,11 @@ A method, typically considered secure, of handling the above operation is to enc
 const articleUrl = `https://example.com/static/article/${encodeURIComponent(articleName)}`;
 ```
 
-While the above operation securely handles examples 1 and 2, it does not handle example 3, as `encodeURIComponent()` does not encode the dot characters, and a single path can be traversed upwards. 
+While the above operation securely handles Examples 1 and 2, it does not handle Example 3, as `encodeURIComponent()` does not encode the dot characters, and a single path can be traversed upwards.
 
 All three of the above cases indicate that remarkable care must be taken when constructing strings from user input to be requested by the browser. It does not necessitate programming by an inexperienced developer to get this wrong, and is instead indicative of a dangerous design.
 
-This issue is so common that the term "client-side path traversal" (CSPT) has been coined to refer to this class of vulnerability. CSPT has been seeing more and more research as of late. These types of vulnerabilities have been identified in a wide range of websites, with its application being similar to cross-request site forgery (CSRF). These vulnerabilities have been found in web applications which [do not use query parameters](https://netragard.com/saving-csrf-client-side-path-traversal-to-the-rescue/), have been abused to [perform CSS injection](https://hackerone.com/reports/1245165) leading to full-account-takeover, and have been abused to interact with [privileged browser extensions](https://medium.com/@renwa/client-side-path-traversal-cspt-bug-bounty-reports-and-techniques-8ee6cd2e7ca1). Vulnerabilities may arise from stored values instead of queryable parameters on the visited webpage, such as [this 1-client Gitlab takeover](https://gitlab.com/gitlab-org/gitlab/-/issues/365427) vulnerability in 2022. Two different public tools already exist for automatically identifying websites vulnerable to CSPT: [CSPTBurpExtension](https://github.com/doyensec/CSPTBurpExtension) by DoyenSec for Burp Suite, and [Gecko](https://github.com/vitorfhc/gecko), by  Vitor Falcao.
+This issue is so common that the term "client-side path traversal" (CSPT) has been coined to refer to this class of vulnerability. CSPT has been seeing more and more research as of late. These types of vulnerabilities have been identified in a wide range of websites, with its application being similar to cross-site site forgery (CSRF). These vulnerabilities have been found in web applications which [do not use query parameters](https://netragard.com/saving-csrf-client-side-path-traversal-to-the-rescue/), have been abused to [perform CSS injection](https://hackerone.com/reports/1245165) leading to full-account-takeover, and have been abused to interact with [privileged browser extensions](https://medium.com/@renwa/client-side-path-traversal-cspt-bug-bounty-reports-and-techniques-8ee6cd2e7ca1). Vulnerabilities may arise from stored values instead of queryable parameters on the visited webpage, such as [this 1-client Gitlab takeover](https://gitlab.com/gitlab-org/gitlab/-/issues/365427) vulnerability in 2022. Two different public tools already exist for automatically identifying websites vulnerable to CSPT: [CSPTBurpExtension](https://github.com/doyensec/CSPTBurpExtension) by DoyenSec for Burp Suite, and [Gecko](https://github.com/vitorfhc/gecko), by  Vitor Falcao.
 
 Given that attention to this class of vulnerability has been rising, it now raises the question as to whether browsers should, on standard webpages, be shortening URL paths unless explicitly necessary. The vast majority of websites do not rely on this functionality, and it has proven to be an edgecase that is unsafely handled by developers.
 
@@ -99,7 +101,7 @@ It is expected that the number of vulnerable applications will continue to grow,
 
 ## Non-File Reverse Solidus Path URL Strings
 
-Similar to the example before, the following values for the `articleValue` parameter can be seen as they are set, versus how they are requested for the browser.
+Similar to the example code before, the following values for the `articleValue` parameter can be seen as they are set, versus how they are requested for the browser.
 
 | Example # | `articleName` | Request URL |
 |-|-|-|
@@ -120,8 +122,6 @@ The Content-Security-Policy is a perfect fit for disabling and enabling the func
 At the time of writing this, available CSP directives that this issue pertains to are: `script-src style-src img-src connect-src object-src frame-src child-src form-action frame-ancestors base-uri worker-src manifest-src prefetch-src`, and a default `default-src`.
 
 This proposal suggests that each of these directives may include the expressions `no-shortening` and `no-reverse-solidus`, which disable the canonization methods outlined above.
-
-For example, it _is_ a common pattern to use the double-dot shortening to retrieve static files such as css files, javascript files, and image files, relative to the path a page is viewed on. For example:
 
 ### `no-shortening` CSP Expression
 
@@ -164,15 +164,15 @@ $ curl -L https://www.shopify.com/dir1$(urlencode $(urlencode $(urlencode $(urle
 [robots.txt]
 ```
 
-When requesting `/dir1\\..\\robots.txt`, 20 websites served `robots.txt` (see [Appendix](#invalid-reverse-soliud-following-urls)), but by requesting `/dir1%5C..%5Crobots.txt`, just 4 websites served `robots.txt` (see [Appendix](#invalid-reverse-solidus-encoded-following-urls)). Again, this means that on these websites, it is likely impossible to retrieve files which contain `\..` in their filename.
+When requesting `/dir1\..\robots.txt`, 20 websites served `robots.txt` (see [Appendix](#invalid-reverse-soliud-following-urls)), but by requesting `/dir1%5C..%5Crobots.txt`, just 4 websites served `robots.txt` (see [Appendix](#invalid-reverse-solidus-encoded-following-urls)). Again, this means that on these websites, it is likely impossible to retrieve files which contain `\..` in their filename.
 
-This limitation is not a limitation directly of the CSP expressions outlined in this document. If we go back to the previous example of vulnerable code and sanitize the `articleName` using `URLSearchParams()` as so:
+This limitation is not a limitation directly of the CSP expressions outlined in this document. If we go back to the previous example of vulnerable code and sanitize the `articleName` using `encodeURIComponent()` as so:
 
 ```js
         async function loadArticle() {
             const articleName = new URLSearchParams(window.location.search).get('articleName');
             
-            const articleUrl = `https://example.com/static/article/{URLSearchParams($articleName)}`;
+            const articleUrl = `https://example.com/static/article/{encodeURIComponent($articleName)}`;
             const response = await fetch(articleUrl);
             const articleHtml = await response.text();
             
@@ -187,6 +187,24 @@ the code is _still_ vulnerable, if `articleName` is double encoded: `encode(enco
 ## Languages Without Canonicalization
 
 Some websites rely on relative paths (beginning or not) with `../` to import resources such as css, javascript, and font files, on webpages. These websites are reguarley developed using languages that do not provide standard functions to calculate absolute paths or that can canonicalize URLs. For example, PHP does not provide any standard function that can convert `/dir1/../dir3` into `/dir3`, and developers are left with the task of [creating their own implementation](https://www.php.net/manual/en/function.realpath.php#84012). Websites like this would benefit from the `allow-shortening` expression.
+
+# Further Thoughts
+
+Indeed, regardless of whether canonicalization methods exist for a website or not, it is a common pattern to use the double-dot shortening to retrieve static files such as css, javascript, and image, relative to the path a page is viewed on. For example, a search on GitHub for the regular expression `src="\.\..+"/` reveals [tens of millions of results](https://github.com/search?q=%2Fsrc%3D%22%5C.%5C..%2B%22%2F&type=code).
+
+## `allow-relative-shortening` CSP expression
+
+In order to allow websites to continue to reference resources relative to the current path, a third CSP expression could also be implemented: `allow-relative-shortening`.
+
+The `allow-relative-shortening` expression could, if implemented, allow path shortening in contexts where where resources are loaded with paths such as `../../static/resource.js`. If enabled `allow-relative-shortening` would canonicalize double-dot paths under the two conditions that:
+
+1. The path to be canonicalized _begins_ with a double-dot. For example, a path such as `../../static/resource.js` would be shortened, while a path such as `path1/../path2/resource.js` would result in a parsing error. A path such as `../../static/dir1/../resource.js` would be allowed, as it _begins_ with a double-dot.
+2. The parsed host is null. For example, the URL `https://example.com/../../static/resource.js` would result in a parsing error. The URL `https://example.com/static/../static/reource.js` would also result in a parsing error, as the host is `example.com`.
+
+This expression would allow websites to serve resources from relative paths directly backwards of the page, while blocking resources that serve resources from relative paths that go forwards (up) a directory then backwards (down).
+
+This expression would provide a more balanced approach to simply blocking all double-dot shortenings, allowing resources to be loaded relative to the current location in both directions of the path as long as the shortening is at the beginning of the path, while disallowing potentially dangerous shortening of forwards-then-backwards path traversal.
+
 
 # Appendix
 
